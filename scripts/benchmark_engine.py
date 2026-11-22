@@ -48,7 +48,7 @@ def main():
                 visual = inspect_video(str(video.resolve()), folder, max_frames=6)
                 assert visual['frames'] and not visual['has_audio']
             result = generate('Synthetic benchmark: ' + name,
-                              {'transcripcion': transcript, 'duracion_seg': 7}, folder,
+                              {'transcripcion': transcript, 'duracion_seg': visual['duration_seconds'] if visual else 7}, folder,
                               source_type='local_video', visual=visual)
             (folder / 'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
             instructions = normalize(result.get('instructions_md', ''))

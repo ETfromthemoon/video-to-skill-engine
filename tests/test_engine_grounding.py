@@ -15,4 +15,3 @@ class GroundingTests(unittest.TestCase):
             with patch('reel_skill_factory.core.run', return_value=''):
                 with self.assertRaisesRegex(WorkflowError, 'JSON esperado'):
                     _model_json('source_map.md', 'source_map_schema.json', 'answer.json', folder, {})
-
