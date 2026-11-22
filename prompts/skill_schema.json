@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "review_reason", "title", "slug", "description", "instructions_md", "analysis", "evidence", "technical_sources"],
+  "properties": {
+    "status": {"type": "string", "enum": ["skillable", "not_skillable", "needs_review"]},
+    "review_reason": {"type": "string", "enum": ["none", "transcription", "missing_context", "technical", "other"]},
+    "title": {"type": "string"},
+    "slug": {"type": "string"},
+    "description": {"type": "string"},
+    "instructions_md": {"type": "string"},
+    "analysis": {"type": "string"},
+    "technical_sources": {"type": "array", "items": {"type": "string"}},
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["timestamp", "modality", "finding"],
+        "properties": {
+          "timestamp": {"type": "string"},
+          "modality": {"type": "string", "enum": ["audio", "visual"]},
+          "finding": {"type": "string"}
+        }
+      }
+    }
+  }
+}

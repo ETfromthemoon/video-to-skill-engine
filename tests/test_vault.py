@@ -1,0 +1,195 @@
+import tempfile
+import hashlib
+import json
+import unittest
+from pathlib import Path
+
+from reel_skill_factory.vault import render_vault, write_vault
+
+
+class VaultTests(unittest.TestCase):
+    def test_renders_skill_and_escapes_video_content(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            job = root / "jobs" / "ABC123"
+            job.mkdir(parents=True)
+            (job / "result.json").write_text(
+                '{"title":"Revisar <script>","description":"Diseñar tarjetas",'
+                '"instructions_md":"No ejecutar <script>","analysis":"Visto en [00:02]",'
+                '"source_map":{"thesis":"Enseña <script>","lessons":'
+                '[{"id":"L1","point":"Corregir la tarjeta","basis":"explicit"}]},'
+                '"fidelity_review":{"verdict":"pass","summary":"Cubre L1",'
+                '"issues":[],"editorial_additions":["Comprobar contraste"]},'
+                '"evidence":[{"timestamp":"[00:02]","modality":"visual",'
+                '"finding":"Una tarjeta"}]}', encoding="utf-8")
+            state = {"ABC123": {"status": "draft", "draft_path": "C:/private/ABC123/SKILL.md"}}
+            html = render_vault(state, root / "jobs", root)
+            self.assertIn("Revisar &lt;script&gt;", html)
+            self.assertIn("Borrador privado", html)
+            self.assertNotIn("<script>", html)
+            self.assertIn("El video enseña", html)
+            self.assertIn("Enseña &lt;script&gt;", html)
+            self.assertNotIn("Contraste y adaptaciones", html)
+            self.assertNotIn("Evidencia del video (1)", html)
+            self.assertNotIn("C:/private/ABC123/SKILL.md", html)
+            self.assertNotIn("github.com", html)
+            self.assertTrue(write_vault(state, root / "jobs", root).is_file())
+
+    def test_ignores_invalid_job_ids(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            html = render_vault({"../outside": {"status": "draft"}}, root / "jobs", root)
+            self.assertNotIn("../outside", html)
+
+    def test_only_one_draft_opens_by_default(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state = {"A": {"status": "draft"}, "B": {"status": "draft"},
+                     "C": {"status": "processing"}}
+            html = render_vault(state, root / "jobs", root, token="test")
+            self.assertEqual(html.count('<details class="card" open>'), 1)
+            self.assertEqual(html.count('<details class="card">'), 2)
+
+    def test_interactive_vault_shows_local_first_frame(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            job = root / "jobs" / "ABC123"
+            job.mkdir(parents=True)
+            frame = job / "first.jpg"
+            frame.write_bytes(b"test")
+            (job / "visual.json").write_text(json.dumps({"frames": [{"image": str(frame)}]}), encoding="utf-8")
+            html = render_vault({"ABC123": {"status": "draft"}}, root / "jobs", root, token="test")
+            self.assertIn('src="/frame/ABC123"', html)
+
+    def test_ready_demo_is_visible_without_user_writing_a_scenario(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            job = root / "jobs" / "ABC123"
+            job.mkdir(parents=True)
+            (job / "result.json").write_text(json.dumps({
+                "slug": "tarjeta-cafe", "source_map": {"thesis": "Diseñar tarjetas útiles"},
+                "fidelity_review": {"summary": "Sigue la idea del video", "issues": []},
+            }), encoding="utf-8")
+            skill = root / "private" / "SKILL.md"
+            skill.parent.mkdir()
+            skill.write_text("A skill\n", encoding="utf-8")
+            revision = hashlib.sha256(skill.read_text(encoding="utf-8").encode()).hexdigest()
+            (job / "auto-demo.json").write_text(json.dumps({
+                "status": "ready", "revision": revision,
+                "scenario": "Tarjeta de café", "expected": "Precio y botón",
+                "sample_output_md": "<script>alert(1)</script>",
+                "preview_html": "<html><body>Ejemplo</body></html>",
+                "checklist": ["Precio visible"], "limitations": ["Sin navegador"],
+                "judgment": {"verdict": "pass", "summary": "Cubre L1", "gaps": []},
+            }), encoding="utf-8")
+            html = render_vault({"ABC123": {"status": "draft", "draft_path": str(skill)}},
+                                root / "jobs", root, token="test")
+            self.assertIn("Ejemplo de lo que hace la skill", html)
+            self.assertIn('src="/demo/ABC123"', html)
+            self.assertIn("El video enseña", html)
+            self.assertIn("Sigue la idea del video", html)
+            self.assertIn("Aprobar e instalar", html)
+            self.assertIn('<details class="card" open>', html)
+            self.assertNotIn("Prueba adicional opcional", html)
+            self.assertNotIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+            self.assertNotIn("<script>alert(1)</script>", html)
+
+    def test_motion_demo_shows_observed_stages_and_cautions_without_them(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            job = root / "jobs" / "ABC123"
+            job.mkdir(parents=True)
+            skill = root / "private" / "SKILL.md"
+            skill.parent.mkdir()
+            skill.write_text("Motion skill", encoding="utf-8")
+            revision = hashlib.sha256(skill.read_text(encoding="utf-8").encode()).hexdigest()
+            (job / "result.json").write_text(json.dumps({
+                "source_map": {"thesis": "Animación de interfaz", "lessons": []}
+            }), encoding="utf-8")
+            demo = {"status": "ready", "revision": revision, "proof_kind": "interface_motion",
+                    "scenario": "Animate a dashboard", "expected": "Three visible states",
+                    "preview_html": "<html><body>Demo</body></html>", "motion_stages": ["Uno", "Dos", "Tres"],
+                    "motion_screenshots": [], "judgment": {"verdict": "pass", "summary": "Claim", "gaps": []}}
+            (job / "auto-demo.json").write_text(json.dumps(demo), encoding="utf-8")
+            state = {"ABC123": {"status": "draft", "draft_path": str(skill)}}
+            html = render_vault(state, root / "jobs", root, token="test")
+            self.assertIn("El movimiento todavía no está demostrado", html)
+            self.assertIn("Aprobar con vacíos", html)
+            demo["motion_screenshots"] = [f"motion-{revision[:16]}-{i}.png" for i in range(3)]
+            for index, name in enumerate(demo["motion_screenshots"]):
+                (job / name).write_bytes(b"PNG" + bytes([index]))
+            (job / "auto-demo.json").write_text(json.dumps(demo), encoding="utf-8")
+            html = render_vault(state, root / "jobs", root, token="test")
+            self.assertIn("Momentos del movimiento", html)
+            self.assertIn('src="/motion/ABC123/0"', html)
+            self.assertIn("Aprobar e instalar", html)
+
+    def test_review_after_failed_correction_still_offers_feedback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            html = render_vault({"ABC123": {"status": "needs_review", "draft_path": "C:/private/SKILL.md"}},
+                                root / "jobs", root, token="test")
+            self.assertIn("Volver a pedir el cambio", html)
+            self.assertNotIn('value="activate"', html)
+
+    def test_shows_invocation_and_rename_for_installed_skill(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            job = root / "jobs" / "ABC123"
+            job.mkdir(parents=True)
+            (job / "activation.json").write_text(json.dumps({
+                "name": "better-name", "approved": str(root / "approved" / "better-name" / "SKILL.md"),
+                "installed": [str(root / "agent" / "better-name" / "SKILL.md")],
+            }), encoding="utf-8")
+            html = render_vault({"ABC123": {"status": "draft"}}, root / "jobs", root, token="test")
+            self.assertIn("$better-name", html)
+            self.assertNotIn("Dónde está instalada", html)
+            self.assertIn('<details class="card">', html)
+            self.assertIn('value="rename"', html)
+            self.assertIn('name="skill_name" value="better-name"', html)
+
+    def test_approval_form_lets_user_choose_install_name(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            job = root / "jobs" / "ABC123"
+            job.mkdir(parents=True)
+            (job / "result.json").write_text('{"slug":"suggested-name"}', encoding="utf-8")
+            draft = root / "draft" / "SKILL.md"
+            draft.parent.mkdir()
+            draft.write_text("Skill", encoding="utf-8")
+            revision = hashlib.sha256(b"Skill").hexdigest()
+            (job / "auto-demo.json").write_text(json.dumps({
+                "status": "ready", "revision": revision,
+                "judgment": {"verdict": "pass", "gaps": []},
+            }), encoding="utf-8")
+            html = render_vault({"ABC123": {"status": "draft", "draft_path": str(draft)}},
+                                root / "jobs", root, token="test")
+            self.assertIn("Nombre de la skill", html)
+            self.assertIn('name="skill_name" value="suggested-name"', html)
+            self.assertIn('value="activate"', html)
+
+    def test_interactive_vault_shows_review_gate_and_escapes_report(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            report = root / "jobs" / "ABC123" / "evaluations" / "trial" / "report.json"
+            report.parent.mkdir(parents=True)
+            skill = root / "private" / "SKILL.md"
+            skill.parent.mkdir(parents=True)
+            skill.write_text("A skill\n", encoding="utf-8")
+            revision = hashlib.sha256(skill.read_text(encoding="utf-8").encode()).hexdigest()
+            report.write_text('{"status":"review","revision":"' + revision + '","judgment":{"verdict":"review",'
+                              '"summary":"<script>","gaps":["Sin navegador"]}}', encoding="utf-8")
+            html = render_vault({"ABC123": {"status": "draft", "draft_path": str(skill)}}, root / "jobs", root,
+                                token="local-token")
+            self.assertNotIn("Probar este borrador", html)
+            self.assertNotIn("Cómo revisar una skill, paso a paso", html)
+            self.assertIn("Aprobar con vacíos e instalar", html)
+            self.assertIn("Corregir y crear otro ejemplo", html)
+            self.assertIn("Sin navegador", html)
+            self.assertIn("La prueba adicional no creó archivos", html)
+            self.assertNotIn('http-equiv="refresh"', html)
+            self.assertNotIn("<script>", html)
+
+
+if __name__ == "__main__":
+    unittest.main()

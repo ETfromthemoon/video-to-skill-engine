@@ -1,0 +1,57 @@
+param(
+    [string]$TaskName = 'Reel Skill Factory'
+)
+
+$ErrorActionPreference = 'Stop'
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$venvPython = Join-Path $repoRoot '.venv\Scripts\python.exe'
+$python = if (Test-Path -LiteralPath $venvPython) {
+    $venvPython
+} else {
+    (Get-Command python -ErrorAction Stop).Source
+}
+
+Push-Location $repoRoot
+try {
+    & $python -m reel_skill_factory doctor
+    if ($LASTEXITCODE -ne 0) {
+        throw 'El diagnóstico debe pasar antes de instalar el inicio automático.'
+    }
+} finally {
+    Pop-Location
+}
+
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($existing) {
+    $action = $existing.Actions | Select-Object -First 1
+    if ($action.WorkingDirectory -ne $repoRoot) {
+        throw "Ya existe una tarea llamada '$TaskName' con otra ubicación. Usa -TaskName para elegir otro nombre."
+    }
+}
+
+$launcher = Join-Path $PSScriptRoot 'run-windows-task.ps1'
+$arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -File "' + $launcher + '"'
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments -WorkingDirectory $repoRoot
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity
+$repeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
+$principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
+$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable
+
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($trigger, $repeat) -Principal $principal `
+    -Settings $settings -Description 'Procesa videos y enlaces sincronizados con Google Drive.' -Force | Out-Null
+if (-not $existing) { Start-ScheduledTask -TaskName $TaskName }
+& $venvPython -m reel_skill_factory vault | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'No se pudo crear la bóveda local.' }
+$vaultUrl = 'http://127.0.0.1:8766/'
+$shell = New-Object -ComObject WScript.Shell
+foreach ($folder in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Startup'))) {
+    $shortcut = $shell.CreateShortcut((Join-Path $folder 'Bóveda de Skills.lnk'))
+    $shortcut.TargetPath = Join-Path $env:WINDIR 'explorer.exe'
+    $shortcut.Arguments = $vaultUrl
+    $shortcut.WorkingDirectory = $repoRoot
+    $shortcut.Description = 'Abrir la bóveda local de skills'
+    $shortcut.Save()
+}
+Write-Host "Tarea '$TaskName' instalada para $identity. Procesará la carpeta cada 5 minutos mientras la sesión esté abierta."
+Write-Host "Bóveda local: $vaultUrl (acceso directo en el escritorio; se abre al iniciar sesión)."

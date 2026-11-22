@@ -1,0 +1,67 @@
+name: Test
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  unit:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - run: sh -n setup.sh
+        if: runner.os != 'Windows'
+      - run: python -m py_compile scripts/prepare_runtime.py
+      - run: python -m unittest discover -s tests -v
+  dependencies:
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Prepare isolated environment
+        run: python -m venv .venv
+      - name: Install public Codex CLI
+        run: npm install -g @openai/codex
+      - name: Check public CLI compatibility
+        shell: bash
+        run: |
+          codex --version
+          codex exec --help > codex-help.txt
+          python -c "from pathlib import Path; text=Path('codex-help.txt').read_text(); assert all(flag in text for flag in ('--image','--output-schema','--ephemeral','--ignore-user-config','--strict-config')), 'Update required Codex CLI flags'"
+      - name: Install and exercise dependencies
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then PY=.venv/Scripts/python.exe; else PY=.venv/bin/python; fi
+          if [ "$RUNNER_OS" = Linux ]; then "$PY" -m pip install torch --index-url https://download.pytorch.org/whl/cpu; fi
+          "$PY" -m pip install -r requirements.txt
+          "$PY" -m pip check
+          "$PY" scripts/prepare_runtime.py --skip-model
+          "$PY" scripts/smoke_runtime.py
+  windows-installer-syntax:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - shell: pwsh
+        run: |
+          foreach ($file in @('setup.ps1', 'scripts/install-windows-task.ps1', 'scripts/run-windows-task.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file).Path, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_.Message }
+              exit 1
+            }
+          }
