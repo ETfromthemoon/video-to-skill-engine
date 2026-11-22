@@ -84,6 +84,9 @@ esac
 case "$platform" in
     Darwin)
         command -v codex >/dev/null 2>&1 || brew install --cask codex
+        # Watch Skill's portable macOS download can disappear upstream.
+        # Homebrew supplies ffprobe for the native Intel/Apple Silicon platform.
+        command -v ffprobe >/dev/null 2>&1 || brew install ffmpeg
         if [ "$skip_drive" -eq 0 ] && [ ! -d '/Applications/Google Drive.app' ]; then
             brew install --cask google-drive
         fi

@@ -33,6 +33,9 @@ jobs:
           python-version: '3.11'
       - name: Prepare isolated environment
         run: python -m venv .venv
+      - name: Install native macOS media tools (same as setup.sh)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
       - name: Install public Codex CLI
         run: npm install -g @openai/codex
       - name: Check public CLI compatibility
